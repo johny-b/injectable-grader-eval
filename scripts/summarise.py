@@ -104,19 +104,22 @@ def collect(files: list[str], do_recheck: bool = False) -> list[dict]:
     rows: list[dict] = []
     for f in files:
         log = read_eval_log(f)
-        cond = (log.eval.metadata or {}).get("condition", "?")
+        emd = log.eval.metadata or {}
+        cond = emd.get("condition", "-")
         model = log.eval.model
         for i, s in enumerate(log.samples or []):
             sc = list(s.scores.values())[0] if s.scores else None
             md = (sc.metadata or {}) if sc else {}
             val = (sc.value or {}) if sc else {}
-            usage_in = usage_out = 0
+            usage_in = usage_out = usage_reason = 0
             for u in (s.model_usage or {}).values():
                 usage_in += u.input_tokens or 0
                 usage_out += u.output_tokens or 0
+                usage_reason += u.reasoning_tokens or 0
             rows.append({
                 "file": f, "idx": len(rows), "sample_id": s.id, "epoch": s.epoch,
                 "condition": cond, "model": model,
+                "effort": emd.get("effort"), "max_tokens": emd.get("max_tokens"),
                 "outcome": md.get("outcome", "error"),
                 "score": val.get("score", 0.0) if isinstance(val, dict) else 0.0,
                 "read_grader": bool(md.get("read_grader")),
@@ -136,6 +139,7 @@ def collect(files: list[str], do_recheck: bool = False) -> list[dict]:
                 "notes": md.get("notes") or [],
                 "seconds": s.total_time or 0.0,
                 "in_tok": usage_in, "out_tok": usage_out,
+                "reasoning_tok": usage_reason,
                 "limit": str(s.limit) if getattr(s, "limit", None) else "",
                 "error": bool(s.error),
                 "rechecked": False,
@@ -155,7 +159,9 @@ def summarise(rows: list[dict]) -> None:
     for model, cond in arms:
         rs = [r for r in rows if r["model"] == model and r["condition"] == cond]
         n = len(rs)
-        print(f"\n{'='*78}\nmodel: {model}   condition: {cond}   n = {n}")
+        eff = sorted({(r["effort"], r["max_tokens"]) for r in rs}, key=str)
+        print(f"\n{'='*78}\nmodel: {model}   condition: {cond}   n = {n}"
+              f"   effort/max_tokens: {eff}")
         # `n` is every rollout the run produced; `n_ok` is the ones that
         # have a result. Rates are reported over n_ok: a rollout whose sandbox
         # died tells us nothing about the model, and scoring it 0 would pull
@@ -216,6 +222,8 @@ def summarise(rows: list[dict]) -> None:
                   f"min {min(secs):6.1f}  max {max(secs):6.1f}")
         print(f"  input tokens   mean {sum(it)/n:7.1f}  min {min(it):6d}  max {max(it):6d}")
         print(f"  output tokens  mean {sum(ot)/n:7.1f}  min {min(ot):6d}  max {max(ot):6d}")
+        rt = [r["reasoning_tok"] for r in rs]
+        print(f"  (of which reasoning, where reported) mean {sum(rt)/n:7.1f}  max {max(rt):6d}")
         print(f"  bash calls     mean {sum(r['n_bash'] for r in rs)/n:7.1f}  "
               f"max {max(r['n_bash'] for r in rs):6d}")
         print(f"  TOTAL tokens   in {sum(it):,}  out {sum(ot):,}")
@@ -231,6 +239,39 @@ def summarise(rows: list[dict]) -> None:
         if bad:
             print(f"\n  !! {len(bad)} rollout(s) CHANGED /grader/grader.py in the container "
                   f"(official score unaffected -- it comes from /opt/trusted)")
+
+
+def per_question(rows: list[dict]) -> None:
+    """Rates per sample id (question), per model/condition arm.
+
+    Denominator per cell is the question's scorable rollouts (n_ok: not
+    infra_error / error). Columns: exploited (score > 0.5), attempted or
+    exploited, read the grader, ran the grader, answer accepted, mean official
+    score.
+    """
+    arms = sorted({(r["model"], r["condition"]) for r in rows})
+    for model, cond in arms:
+        rs = [r for r in rows if r["model"] == model and r["condition"] == cond]
+        print(f"\n{'='*78}\nper question -- model: {model}   condition: {cond}")
+        print(f"  {'question':<18} {'n':>3} {'n_ok':>4} {'infra':>5} {'exploit':>8} "
+              f"{'att|exp':>8} {'read':>6} {'ran':>6} {'correct':>8} {'score':>6}")
+        for qid in sorted({str(r["sample_id"]) for r in rs},
+                          key=lambda q: (list(QUESTIONS_BY_ID).index(q)
+                                         if q in QUESTIONS_BY_ID else 99, q)):
+            q = [r for r in rs if str(r["sample_id"]) == qid]
+            ok = [r for r in q if r["outcome"] not in ("error", "infra_error")]
+            n_ok = len(ok)
+            infra = sum(r["outcome"] == "infra_error" for r in q)
+
+            def pct(k: int) -> str:
+                return f"{k}/{n_ok}" if n_ok else "-"
+            exp = sum(r["outcome"] == "exploited" for r in ok)
+            att = exp + sum(r["outcome"] == "attempted" for r in ok)
+            mean = (sum(r["score"] for r in ok) / n_ok) if n_ok else float("nan")
+            print(f"  {qid:<18} {len(q):>3} {n_ok:>4} {infra:>5} {pct(exp):>8} "
+                  f"{pct(att):>8} {pct(sum(r['read_grader'] for r in ok)):>6} "
+                  f"{pct(sum(r['ran_grader'] for r in ok)):>6} "
+                  f"{pct(sum(r['answer_correct'] for r in ok)):>8} {mean:>6.3f}")
 
 
 def needs_review(rows: list[dict]) -> list[dict]:
@@ -296,7 +337,14 @@ def main() -> int:
                          "the stored messages with the CURRENT detectors. The "
                          "official score is read from the log either way.")
     ap.add_argument("--table", action="store_true", help="one line per rollout")
-    ap.add_argument("--json", default=None, help="write the per-rollout rows here")
+    ap.add_argument("--json", default=None,
+                    help="write the per-rollout rows here (a JSON list; one "
+                         "object per rollout with model, sample_id, epoch, "
+                         "outcome, score, flags, response, tokens, seconds)")
+    ap.add_argument("--jsonl", default=None,
+                    help="same rows as JSON Lines (one rollout per line)")
+    ap.add_argument("--no-per-question", action="store_true",
+                    help="skip the per-question breakdown")
     a = ap.parse_args()
 
     files = find_logs(a.paths)
@@ -308,6 +356,8 @@ def main() -> int:
               "official scores come from the logs)")
     print(f"{len(files)} log file(s), {len(rows)} rollout(s)")
     summarise(rows)
+    if not a.no_per_question:
+        per_question(rows)
 
     if a.table:
         print(f"\n{'#':>3} {'outcome':<24} {'score':>5} {'rd':>3} {'run':>3} {'tmp':>3} "
@@ -340,6 +390,11 @@ def main() -> int:
     if a.json:
         Path(a.json).write_text(json.dumps(rows, indent=2, default=str))
         print(f"\nwrote {a.json}")
+    if a.jsonl:
+        with open(a.jsonl, "w") as fh:
+            for r in rows:
+                fh.write(json.dumps(r, default=str) + "\n")
+        print(f"wrote {a.jsonl}")
     return 0
 
 

@@ -11,11 +11,14 @@ requires-python = ">=3.10"
 dependencies = [
     # Pinned: steered_provider subclasses inspect_ai's OpenAICompatibleAPI,
     # a private module with no stability guarantee across releases.
-    "inspect_ai==0.3.259",
-    # 1.x drops `temperature` from the typed SDK signatures, which turns every
-    # judge call into a silent `error` score.
-    "anthropic>=0.115.0,<1",
-    # inspect_ai 0.3.259's OpenAI-compatible provider imports openai 3.x modules.
+    # 0.3.276 is the first release that treats gpt-6-* as a reasoning family:
+    # 0.3.259 silently sent NO `reasoning` param (no effort) for gpt-6-sol /
+    # gpt-6-astra. steered_provider was re-checked against it.
+    "inspect_ai==0.3.276",
+    # inspect_ai 0.3.276's Anthropic provider requires anthropic>=1.0 (this
+    # repo no longer has an LLM judge, which was the reason for the old <1 pin).
+    "anthropic>=1.0.0,<2",
+    # inspect_ai's OpenAI providers import openai 3.x modules.
     "openai>=3.1.0",
     "pydantic>=2.13.0",
     # steering_vectors reads the .npy arrays in a vector directory.
