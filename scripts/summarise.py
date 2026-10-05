@@ -42,6 +42,24 @@ def _sample_accepted(sample) -> list[str]:
     return list(QUESTIONS_BY_ID[str(sample.id)].accepted)
 
 
+def _api_refusals(sample) -> list[str]:
+    """One entry (refusal category, or "") per model call the PROVIDER blocked."""
+    out = []
+    for e in (sample.events or []):
+        if e.event != "model" or not e.output or not e.output.choices:
+            continue
+        if e.output.choices[0].stop_reason != "content_filter":
+            continue
+        cat = ""
+        resp = (e.call.response if e.call else None) or {}
+        if isinstance(resp, dict):
+            sd = resp.get("stop_details") or {}
+            if isinstance(sd, dict):
+                cat = sd.get("category") or ""
+        out.append(cat)
+    return out
+
+
 class _FakeState:
     """Just enough of a TaskState for _transcript_evidence() to read a log."""
 
@@ -111,11 +129,18 @@ def collect(files: list[str], do_recheck: bool = False) -> list[dict]:
             sc = list(s.scores.values())[0] if s.scores else None
             md = (sc.metadata or {}) if sc else {}
             val = (sc.value or {}) if sc else {}
-            usage_in = usage_out = usage_reason = 0
+            usage_in = usage_out = usage_reason = cache_r = cache_w = 0
             for u in (s.model_usage or {}).values():
                 usage_in += u.input_tokens or 0
                 usage_out += u.output_tokens or 0
                 usage_reason += u.reasoning_tokens or 0
+                cache_r += u.input_tokens_cache_read or 0
+                cache_w += u.input_tokens_cache_write or 0
+            # Anthropic reports input_tokens EXCLUDING cache reads/writes;
+            # OpenAI's input_tokens already INCLUDES cached tokens.
+            prompt_tok = (usage_in + cache_r + cache_w
+                          if model.startswith("anthropic/") else usage_in)
+            refusals = _api_refusals(s)
             rows.append({
                 "file": f, "idx": len(rows), "sample_id": s.id, "epoch": s.epoch,
                 "condition": cond, "model": model,
@@ -140,6 +165,14 @@ def collect(files: list[str], do_recheck: bool = False) -> list[dict]:
                 "seconds": s.total_time or 0.0,
                 "in_tok": usage_in, "out_tok": usage_out,
                 "reasoning_tok": usage_reason,
+                "cache_read_tok": cache_r, "cache_write_tok": cache_w,
+                "prompt_tok": prompt_tok,
+                "n_model_calls": sum(1 for e in (s.events or []) if e.event == "model"),
+                # Provider-side blocks (Anthropic stop_reason "refusal", mapped
+                # by inspect to content_filter): the model's turn was replaced
+                # by an empty one. NOT a model decision we can read.
+                "api_refusals": len(refusals),
+                "api_refusal_categories": sorted({c for c in refusals if c}),
                 "limit": str(s.limit) if getattr(s, "limit", None) else "",
                 "error": bool(s.error),
                 "rechecked": False,
@@ -151,7 +184,7 @@ def collect(files: list[str], do_recheck: bool = False) -> list[dict]:
 
 def rate(name: str, k: int, n: int) -> str:
     lo, hi = wilson(k, n)
-    return f"  {name:<34} {k:>3}/{n:<3} = {k/n if n else 0:5.1%}   95% CI [{lo:5.1%}, {hi:5.1%}]"
+    return f"  {name:<36} {k:>3}/{n:<3} = {k/n if n else 0:5.1%}   95% CI [{lo:5.1%}, {hi:5.1%}]"
 
 
 def summarise(rows: list[dict]) -> None:
@@ -204,6 +237,13 @@ def summarise(rows: list[dict]) -> None:
                    sum(r["answer_correct"] for r in scored), n_ok))
         print(rate("grader crashed on the answer",
                    sum(r["grader_crashed"] for r in scored), n_ok))
+        ref = [r for r in scored if r["api_refusals"]]
+        print(rate("PROVIDER refusal in the episode", len(ref), n_ok))
+        if ref:
+            cats = Counter(c for r in ref for c in r["api_refusal_categories"])
+            print(f"  !! {len(ref)} rollout(s) had >=1 model turn BLOCKED by the provider "
+                  f"(stop_reason refusal/content_filter; categories {dict(cats)}); "
+                  f"outcomes of these: {dict(Counter(r['outcome'] for r in ref))}")
 
         s = [r["score"] for r in scored]
         if s:
@@ -220,13 +260,20 @@ def summarise(rows: list[dict]) -> None:
         if secs:
             print(f"  wall seconds   mean {sum(secs)/len(secs):7.1f}  "
                   f"min {min(secs):6.1f}  max {max(secs):6.1f}")
-        print(f"  input tokens   mean {sum(it)/n:7.1f}  min {min(it):6d}  max {max(it):6d}")
+        print(f"  input tokens   mean {sum(it)/n:7.1f}  min {min(it):6d}  max {max(it):6d}"
+              f"   (Anthropic: excludes cache)")
+        pt = [r["prompt_tok"] for r in rs]
+        cr = [r["cache_read_tok"] for r in rs]; cw = [r["cache_write_tok"] for r in rs]
+        print(f"  prompt tokens  mean {sum(pt)/n:7.1f}  min {min(pt):6d}  max {max(pt):6d}"
+              f"   (all input incl. cache; cache read mean {sum(cr)/n:.0f}, write mean {sum(cw)/n:.0f})")
+        mc = [r["n_model_calls"] for r in rs]
+        print(f"  model calls    mean {sum(mc)/n:7.1f}  max {max(mc):6d}")
         print(f"  output tokens  mean {sum(ot)/n:7.1f}  min {min(ot):6d}  max {max(ot):6d}")
         rt = [r["reasoning_tok"] for r in rs]
         print(f"  (of which reasoning, where reported) mean {sum(rt)/n:7.1f}  max {max(rt):6d}")
         print(f"  bash calls     mean {sum(r['n_bash'] for r in rs)/n:7.1f}  "
               f"max {max(r['n_bash'] for r in rs):6d}")
-        print(f"  TOTAL tokens   in {sum(it):,}  out {sum(ot):,}")
+        print(f"  TOTAL tokens   prompt {sum(pt):,}  out {sum(ot):,}")
         lim = Counter(r["limit"] for r in rs if r["limit"])
         if lim:
             print(f"  hit a limit: {dict(lim)}")
@@ -254,7 +301,7 @@ def per_question(rows: list[dict]) -> None:
         rs = [r for r in rows if r["model"] == model and r["condition"] == cond]
         print(f"\n{'='*78}\nper question -- model: {model}   condition: {cond}")
         print(f"  {'question':<18} {'n':>3} {'n_ok':>4} {'infra':>5} {'exploit':>8} "
-              f"{'att|exp':>8} {'read':>6} {'ran':>6} {'correct':>8} {'score':>6}")
+              f"{'att|exp':>8} {'read':>6} {'ran':>6} {'correct':>8} {'refusal':>8} {'score':>6}")
         for qid in sorted({str(r["sample_id"]) for r in rs},
                           key=lambda q: (list(QUESTIONS_BY_ID).index(q)
                                          if q in QUESTIONS_BY_ID else 99, q)):
@@ -271,7 +318,8 @@ def per_question(rows: list[dict]) -> None:
             print(f"  {qid:<18} {len(q):>3} {n_ok:>4} {infra:>5} {pct(exp):>8} "
                   f"{pct(att):>8} {pct(sum(r['read_grader'] for r in ok)):>6} "
                   f"{pct(sum(r['ran_grader'] for r in ok)):>6} "
-                  f"{pct(sum(r['answer_correct'] for r in ok)):>8} {mean:>6.3f}")
+                  f"{pct(sum(r['answer_correct'] for r in ok)):>8} "
+                  f"{pct(sum(bool(r['api_refusals']) for r in ok)):>8} {mean:>6.3f}")
 
 
 def needs_review(rows: list[dict]) -> list[dict]:
@@ -289,6 +337,9 @@ def needs_review(rows: list[dict]) -> list[dict]:
             why.append("answer is neither a plain phrase nor names the right answer")
         if r["grader_intact"] is False:
             why.append("grader.py changed in the container")
+        if r["api_refusals"]:
+            why.append(f"{r['api_refusals']} model turn(s) blocked by the provider "
+                       f"({','.join(r['api_refusal_categories']) or '?'})")
         if r["outcome"] == "attempted" and r["score"] >= 0.5:
             why.append("attempt flagged but still scored 0.5")
         if why:
@@ -361,12 +412,12 @@ def main() -> int:
 
     if a.table:
         print(f"\n{'#':>3} {'outcome':<24} {'score':>5} {'rd':>3} {'run':>3} {'tmp':>3} "
-              f"{'inj':>3} {'crash':>5} {'bash':>4} {'out_tok':>7}  response")
+              f"{'inj':>3} {'crash':>5} {'bash':>4} {'refu':>4} {'out_tok':>7}  response")
         for r in rows:
             print(f"{r['idx']:>3} {r['outcome']:<24} {r['score']:>5} "
                   f"{int(r['read_grader']):>3} {int(r['ran_grader']):>3} "
                   f"{int(r['tamper_attempt']):>3} {int(r['injection_shaped']):>3} "
-                  f"{int(r['grader_crashed']):>5} {r['n_bash']:>4} {r['out_tok']:>7}  "
+                  f"{int(r['grader_crashed']):>5} {r['n_bash']:>4} {r['api_refusals']:>4} {r['out_tok']:>7}  "
                   f"{r['response'][:60]!r}")
 
     rev = needs_review(rows)

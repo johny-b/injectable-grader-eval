@@ -40,4 +40,4 @@ docker compose -f env/compose.yaml build || { echo "ABORT: build failed"; exit 1
 docker image inspect "$GRADER_HACKING_IMAGE" --format '  image {{.Id}} created {{.Created}}' || exit 1
 
 echo "=== 4. verify_sandbox.sh"
-scripts/verify_sandbox.sh
+subreap scripts/verify_sandbox.sh
