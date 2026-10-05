@@ -158,6 +158,7 @@ def main(argv=None) -> int:
     if not os.environ.get("DOCKER_HOST"):
         print("warning: DOCKER_HOST is unset (source /work/workspace/tools/env.sh?)",
               flush=True)
+    (Path(a.log_root) / "ALL_DONE.json").unlink(missing_ok=True)
     become_subreaper()
     children: dict[int, tuple[str, object]] = {}
     for m in a.model_list:
@@ -182,6 +183,9 @@ def main(argv=None) -> int:
     # exit codes of our own children.
     rc = 0
     orphans = 0
+    exit_codes: dict[str, int | None] = {m: None for m in a.model_list}
+    started = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    t0 = time.time()
     while children:
         try:
             pid, status = os.wait()
@@ -191,12 +195,45 @@ def main(argv=None) -> int:
             m, fh = children.pop(pid)
             fh.close()
             code = os.waitstatus_to_exitcode(status)
+            exit_codes[m] = code
             print(f"{m} exited {code}", flush=True)
             rc |= code != 0
         else:
             orphans += 1
     print(f"all models done; reaped {orphans} orphan(s)", flush=True)
+    write_all_done(a, exit_codes, started, time.time() - t0, orphans)
     return rc
+
+
+def write_all_done(a, exit_codes, started, seconds, orphans) -> None:
+    """<log-root>/ALL_DONE.json: the completion marker for the whole run."""
+    per_model = {}
+    for m, code in exit_codes.items():
+        done = Path(a.log_root) / slug(m) / "DONE.json"
+        entry: dict = {"exit_code": code, "done_json": str(done) if done.exists() else None}
+        if done.exists():
+            d = json.loads(done.read_text())
+            entry["status"] = d.get("status")
+            entry["seconds"] = d.get("seconds")
+            entry["logs"] = [{k: lg.get(k) for k in ("location", "status", "completed_samples",
+                                                     "total_samples", "sample_errors", "error")}
+                             for lg in d.get("logs", [])]
+        else:
+            entry["status"] = "no DONE.json (child crashed?)"
+        per_model[m] = entry
+    rec = {"status": "ok" if all(e.get("status") == "ok" and e["exit_code"] == 0
+                                 for e in per_model.values()) else "error",
+           "started_at": started,
+           "finished_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+           "seconds": round(seconds), "epochs": a.epochs, "sample_ids": a.sample_ids,
+           "max_sandboxes_per_model": a.max_sandboxes,
+           "max_connections_per_model": a.max_connections,
+           "orphans_reaped": orphans, "models": per_model}
+    out = Path(a.log_root) / "ALL_DONE.json"
+    tmp = out.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(rec, indent=2))
+    tmp.replace(out)
+    print(f"wrote {out}", flush=True)
 
 
 if __name__ == "__main__":
