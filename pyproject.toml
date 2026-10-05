@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "grader-hacking"
+version = "0.1.0"
+description = "Grader-hacking eval (inspectable grader with a known weakness) + a steered-vLLM inspect provider"
+requires-python = ">=3.10"
+
+# Same dependency set as /work/workspace/ctfish, and for the same reasons --
+# the two experiments share the provider and must stay commensurable.
+dependencies = [
+    # Pinned: steered_provider subclasses inspect_ai's OpenAICompatibleAPI,
+    # a private module with no stability guarantee across releases.
+    "inspect_ai==0.3.259",
+    # 1.x drops `temperature` from the typed SDK signatures, which turns every
+    # judge call into a silent `error` score.
+    "anthropic>=0.115.0,<1",
+    # inspect_ai 0.3.259's OpenAI-compatible provider imports openai 3.x modules.
+    "openai>=3.1.0",
+    "pydantic>=2.13.0",
+    # steering_vectors reads the .npy arrays in a vector directory.
+    "numpy>=1.26",
+]
+
+# inspect resolves the --model string before it imports the task file, so the
+# provider has to be discoverable through the entry point rather than an import.
+[project.entry-points.inspect_ai]
+steered = "steered_provider"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["gh_eval*", "steered_provider*", "steering_vectors*"]
+
+[tool.setuptools.package-data]
+gh_eval = ["env/*"]

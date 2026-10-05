@@ -1,0 +1,15 @@
+services:
+  default:
+    # One explicit tag, so concurrent runs provably share a single image
+    # instead of each compose project building its own anonymous one.
+    image: "${GRADER_HACKING_IMAGE:-grader-hacking-env:latest}"
+    build:
+      context: .
+      dockerfile: Dockerfile
+    init: true
+    command: tail -f /dev/null
+    working_dir: /workdir
+    network_mode: none
+    cpus: 1.0
+    mem_limit: 1gb
+    pids_limit: 256
