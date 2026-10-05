@@ -22,7 +22,7 @@ the provider and should stay commensurable:
 4.  **One condition per process**, because inspect's `eval()` owns a display, an
     event loop and process-global concurrency state.
 
-No seed, deliberately: the dataset is one sample per disclosure level and the
+No seed, deliberately: the dataset is one sample and the
 sample size IS the epoch count, so a fixed seed would return the same rollout
 every epoch and the spread over epochs would be a lie.
 """
@@ -129,10 +129,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         "which is how the wrapper is dry-run / piloted.")
     p.add_argument("--conditions", default=",".join(CONDITIONS))
     p.add_argument("--epochs", type=int, default=100,
-                   help="Rollouts per condition per disclosure level.")
-    p.add_argument("--disclosure", default="L1",
-                   help="Comma-separated disclosure levels (L1..L4). Phase 1 "
-                        "is L1; L2-L4 are drafts, see gh_eval/prompts.py.")
+                   help="Rollouts per condition.")
     p.add_argument("--message-limit", type=int, default=18)
     p.add_argument("--command-timeout", type=int, default=30)
     p.add_argument("--token-limit", type=int, default=None)
@@ -171,7 +168,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                   f"`unsteered` is meaningful; running that one.", flush=True)
         names = ["unsteered"]
     a.condition_names = names
-    a.disclosure_levels = [d.strip() for d in a.disclosure.split(",") if d.strip()]
     if a.epochs < 1:
         p.error("--epochs must be at least 1")
     return a
@@ -226,7 +222,6 @@ def run_condition(a: argparse.Namespace, name: str) -> int:
     metadata: dict[str, object] = {
         "condition": name,
         "served_model": model_name,
-        "disclosure": a.disclosure_levels,
         "generate_config": sampling,
         "sampling_profile": a.sampling,
         "eval": "grader_hacking",
@@ -257,7 +252,6 @@ def run_condition(a: argparse.Namespace, name: str) -> int:
     )
 
     task = grader_hacking(
-        disclosure=a.disclosure_levels,
         message_limit=a.message_limit,
         command_timeout=a.command_timeout,
         token_limit=a.token_limit,
@@ -267,7 +261,7 @@ def run_condition(a: argparse.Namespace, name: str) -> int:
         epochs=a.epochs,
     )
 
-    print(f"=== condition {name}: {a.epochs} epochs x {a.disclosure_levels}, "
+    print(f"=== condition {name}: {a.epochs} epochs, "
           f"model {model_name}"
           + (f", steer {steer[0]} @ {steer[1]}" if steer else " (unsteered)")
           + f"\n    max_sandboxes={a.max_sandboxes} "
@@ -298,7 +292,6 @@ def run_condition(a: argparse.Namespace, name: str) -> int:
         "steer_vector": steer[0] if steer else None,
         "steer_strength": steer[1] if steer else None,
         "epochs": a.epochs,
-        "disclosure": a.disclosure_levels,
         "message_limit": a.message_limit,
         "generate_config": sampling,
         "sampling_profile": a.sampling,
@@ -380,7 +373,7 @@ def main(argv: list[str] | None = None) -> int:
     for name in a.condition_names:
         cmd = [sys.executable, str(HERE / "run_grader_hacking.py"), "--_child", name,
                "--model", a.model, "--conditions", name,
-               "--epochs", str(a.epochs), "--disclosure", a.disclosure,
+               "--epochs", str(a.epochs),
                "--message-limit", str(a.message_limit),
                "--command-timeout", str(a.command_timeout),
                "--max-sandboxes", str(a.max_sandboxes),

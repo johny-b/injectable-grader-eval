@@ -1,13 +1,8 @@
 #!/usr/bin/env python3
-"""Sequential L1->L2->L3 supervisor that cannot leak PIDs.
+"""Supervisor for run_grader_hacking.py that cannot leak PIDs.
 
-Two jobs:
-
-1. Chain the disclosure levels SEQUENTIALLY. Each level is one
-   run_grader_hacking.py invocation carrying both conditions, so exactly two
-   cells (unsteered + B_pos0.5) are in flight at any moment -- never six.
-
-2. Register itself as a CHILD SUBREAPER (prctl PR_SET_CHILD_SUBREAPER, 36) and
+Runs one run_grader_hacking.py invocation (all requested conditions) and
+registers itself as a CHILD SUBREAPER (prctl PR_SET_CHILD_SUBREAPER, 36) and
    reap continuously. The kernel then reparents any orphaned descendant --
    notably the `ssh` processes the docker CLI forks when DOCKER_HOST=ssh:// --
    to THIS process instead of to PID 1. PID 1 here is the manager runtime,
@@ -23,8 +18,7 @@ import ctypes, json, os, subprocess, sys, time
 from datetime import datetime, timezone
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-LOG_ROOT = os.environ.get("GH_LOG_ROOT", os.path.join(ROOT, "logs", "kimi_full2"))
-LEVELS = [x for x in os.environ.get("GH_LEVELS", "L1,L2,L3").split(",") if x]
+LOG_ROOT = os.environ.get("GH_LOG_ROOT", os.path.join(ROOT, "logs", "run"))
 EPOCHS = os.environ.get("GH_EPOCHS", "100")
 SANDBOXES = os.environ.get("GH_SANDBOXES", "8")
 CONNS = os.environ.get("GH_CONNS", "12")
@@ -55,24 +49,24 @@ def pid_pressure() -> str:
     except Exception:
         return "n/a"
 
-def run_level(level: str, orphans: list[int]) -> int:
-    """Run one disclosure level to completion, reaping orphans while we wait."""
-    outdir = os.path.join(LOG_ROOT, level)
+def run(orphans: list[int]) -> int:
+    """Run the eval to completion, reaping orphans while we wait."""
+    outdir = LOG_ROOT
     os.makedirs(outdir, exist_ok=True)
     cmd = [PY, os.path.join(ROOT, "scripts", "run_grader_hacking.py"),
            "--model", "steered/kimi", "--conditions", CONDITIONS,
-           "--disclosure", level, "--epochs", EPOCHS,
+           "--epochs", EPOCHS,
            "--max-sandboxes", SANDBOXES, "--max-connections", CONNS,
            "--endpoint-json", os.path.join(ROOT, "run", "endpoint.json"),
            "--log-root", outdir]
-    parent_log = os.path.join(LOG_ROOT, f"parent_{level}.log")
-    log(f"START {level}: epochs={EPOCHS} conditions={CONDITIONS} "
+    parent_log = os.path.join(LOG_ROOT, "parent.log")
+    log(f"START: epochs={EPOCHS} conditions={CONDITIONS} "
         f"sandboxes={SANDBOXES} conns={CONNS} -> {outdir}")
     with open(parent_log, "wb") as fh:
         proc = subprocess.Popen(cmd, cwd=ROOT, stdout=fh, stderr=subprocess.STDOUT)
-    with open(os.path.join(LOG_ROOT, f"parent_{level}.pid"), "w") as fh:
+    with open(os.path.join(LOG_ROOT, "parent.pid"), "w") as fh:
         fh.write(str(proc.pid))
-    log(f"{level} parent pid={proc.pid} log={parent_log}")
+    log(f"parent pid={proc.pid} log={parent_log}")
 
     rc, last_beat = None, 0.0
     while rc is None:
@@ -89,12 +83,12 @@ def run_level(level: str, orphans: list[int]) -> int:
             orphans.append(wpid)          # an orphan we just saved from PID 1
         if time.time() - last_beat > 60:
             last_beat = time.time()
-            beat = {"ts": now(), "level": level, "parent_pid": proc.pid,
+            beat = {"ts": now(), "parent_pid": proc.pid,
                     "orphans_reaped": len(orphans), "pids": pid_pressure()}
             with open(os.path.join(LOG_ROOT, "heartbeat.json"), "w") as fh:
                 json.dump(beat, fh, indent=1)
-            log(f"heartbeat {level} orphans_reaped={len(orphans)} pids={beat['pids']}")
-    log(f"DONE {level} rc={rc} orphans_reaped_total={len(orphans)} pids={pid_pressure()}")
+            log(f"heartbeat orphans_reaped={len(orphans)} pids={beat['pids']}")
+    log(f"DONE rc={rc} orphans_reaped_total={len(orphans)} pids={pid_pressure()}")
     return rc
 
 def main() -> int:
@@ -105,19 +99,17 @@ def main() -> int:
     if not sub:
         log("WARNING: not a subreaper; orphans will escape to PID 1 and leak.")
     orphans: list[int] = []
-    results = {}
-    for level in LEVELS:
-        try:
-            results[level] = run_level(level, orphans)
-        except Exception as exc:
-            log(f"level {level} raised: {exc!r}")
-            results[level] = -1
-    summary = {"finished_at": now(), "levels": results,
+    try:
+        rc = run(orphans)
+    except Exception as exc:
+        log(f"run raised: {exc!r}")
+        rc = -1
+    summary = {"finished_at": now(), "rc": rc,
                "orphans_reaped": len(orphans), "pids": pid_pressure()}
-    with open(os.path.join(LOG_ROOT, "CHAIN_DONE.json"), "w") as fh:
+    with open(os.path.join(LOG_ROOT, "SUPERVISOR_DONE.json"), "w") as fh:
         json.dump(summary, fh, indent=1)
-    log(f"CHAIN COMPLETE {summary}")
-    return 0 if all(v == 0 for v in results.values()) else 1
+    log(f"COMPLETE {summary}")
+    return 0 if rc == 0 else 1
 
 if __name__ == "__main__":
     sys.exit(main())

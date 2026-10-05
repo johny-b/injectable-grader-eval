@@ -271,7 +271,7 @@ def fake_state(cmds=(), tool_transport_failures=()):
     st = Store()
     if tool_transport_failures:
         st.set(S.TOOL_TRANSPORT_FAILURES, list(tool_transport_failures))
-    return types.SimpleNamespace(messages=msgs, metadata={"disclosure": "L1"},
+    return types.SimpleNamespace(messages=msgs, metadata={"question": "atm_gas"},
                                  store=st)
 
 
@@ -387,7 +387,7 @@ check("response unreadable in-container -> no_response",
 r = run_scorer(healthy(read_response=FakeExec(0, "")))
 check("response exists but is empty (exit 0) -> no_response",
       r.metadata["outcome"], "no_response")
-# Regression for the 35 fake `no_response` rollouts in kimi_full2: a nonzero
+# Regression for the 35 fake `no_response` rollouts in an earlier run: a nonzero
 # exit with NOTHING showing the shell ever opened the file is not a verdict
 # about the model. It used to be read as "the model wrote nothing".
 r = run_scorer(healthy(read_response=FakeExec(1, "", "")))
@@ -423,8 +423,8 @@ check("infra_error is in the taxonomy", "infra_error" in S.OUTCOMES, True)
 # ===========================================================================
 # docker-over-SSH transport death
 #
-# Everything below is driven from the VERBATIM text the kimi_full2 run
-# recorded (logs/kimi_full2/INFRA.md). That run lost 51 rollouts to this
+# Everything below is driven from the VERBATIM text an earlier run
+# recorded. That run lost 51 rollouts to this
 # failure and mislabelled 35 more as `no_response` -- "the model wrote
 # nothing" -- because `_INFRA_STDERR` matched none of these strings and the
 # docker CLI's own exit code for them is 1, not 125 and not 255.
@@ -466,7 +466,7 @@ def ssh_dead(stderr=SSH_DEATH_VERBATIM, rc=SSH_DEATH_RC):
 
 
 print("== (a) the ssh transport death is recognised as infra ==")
-check("verbatim kimi_full2 failure is a transport failure",
+check("verbatim earlier-run failure is a transport failure",
       transport_failure_reason(ssh_dead()) is not None, True)
 check("...and therefore infra", _infra_reason(ssh_dead()) is not None, True)
 check("...even though its returncode is 1, not 125/255",

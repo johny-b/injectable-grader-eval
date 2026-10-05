@@ -9,7 +9,7 @@
 #      new multiplexed session per docker CLI call; at 8 concurrent sandboxes
 #      the eval blows straight through 10 and the failures surface as
 #      `mux_client_request_session: Session open refused by peer` -- which is
-#      exactly what corrupted kimi_full2's L2/L3 cells (logs/kimi_full2/INFRA.md).
+#      exactly what corrupted an earlier run.
 #   3. rebuild the sandbox image on the box (env/compose.yaml build).
 #   4. scripts/verify_sandbox.sh, which asserts the permission model on a LIVE
 #      container rather than trusting the Dockerfile.

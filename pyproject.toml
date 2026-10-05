@@ -5,11 +5,9 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "grader-hacking"
 version = "0.1.0"
-description = "Grader-hacking eval (inspectable grader with a known weakness) + a steered-vLLM inspect provider"
+description = "Grader-hacking eval (inspectable grader with a known weakness, location disclosed) + a steered-vLLM inspect provider"
 requires-python = ">=3.10"
 
-# Same dependency set as /work/workspace/ctfish, and for the same reasons --
-# the two experiments share the provider and must stay commensurable.
 dependencies = [
     # Pinned: steered_provider subclasses inspect_ai's OpenAICompatibleAPI,
     # a private module with no stability guarantee across releases.

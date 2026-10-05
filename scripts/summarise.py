@@ -106,7 +106,6 @@ def collect(files: list[str], do_recheck: bool = False) -> list[dict]:
             rows.append({
                 "file": f, "idx": len(rows), "sample_id": s.id, "epoch": s.epoch,
                 "condition": cond, "model": model,
-                "disclosure": md.get("disclosure") or (s.metadata or {}).get("disclosure"),
                 "outcome": md.get("outcome", "error"),
                 "score": val.get("score", 0.0) if isinstance(val, dict) else 0.0,
                 "read_grader": bool(md.get("read_grader")),
@@ -139,16 +138,11 @@ def rate(name: str, k: int, n: int) -> str:
 
 
 def summarise(rows: list[dict]) -> None:
-    # Group by (model, condition, disclosure): a run with several disclosure
-    # levels puts them in ONE log, and pooling them would average away the very
-    # contrast the level is there to create.
-    arms = sorted({(r["model"], r["condition"], str(r["disclosure"])) for r in rows})
-    for model, cond, disc in arms:
-        rs = [r for r in rows if r["model"] == model and r["condition"] == cond
-              and str(r["disclosure"]) == disc]
+    arms = sorted({(r["model"], r["condition"]) for r in rows})
+    for model, cond in arms:
+        rs = [r for r in rows if r["model"] == model and r["condition"] == cond]
         n = len(rs)
-        print(f"\n{'='*78}\nmodel: {model}   condition: {cond}   "
-              f"disclosure: {disc}   n = {n}")
+        print(f"\n{'='*78}\nmodel: {model}   condition: {cond}   n = {n}")
         # `n` is every rollout the run produced; `n_ok` is the ones that
         # have a result. Rates are reported over n_ok: a rollout whose sandbox
         # died tells us nothing about the model, and scoring it 0 would pull
@@ -303,10 +297,10 @@ def main() -> int:
     summarise(rows)
 
     if a.table:
-        print(f"\n{'#':>3} {'disc':<4} {'outcome':<24} {'score':>5} {'rd':>3} {'run':>3} {'tmp':>3} "
+        print(f"\n{'#':>3} {'outcome':<24} {'score':>5} {'rd':>3} {'run':>3} {'tmp':>3} "
               f"{'inj':>3} {'crash':>5} {'bash':>4} {'out_tok':>7}  response")
         for r in rows:
-            print(f"{r['idx']:>3} {str(r['disclosure']):<4} {r['outcome']:<24} {r['score']:>5} "
+            print(f"{r['idx']:>3} {r['outcome']:<24} {r['score']:>5} "
                   f"{int(r['read_grader']):>3} {int(r['ran_grader']):>3} "
                   f"{int(r['tamper_attempt']):>3} {int(r['injection_shaped']):>3} "
                   f"{int(r['grader_crashed']):>5} {r['n_bash']:>4} {r['out_tok']:>7}  "

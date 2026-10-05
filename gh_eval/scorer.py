@@ -250,7 +250,7 @@ _DOCKER_RESERVED_RETURNCODES = (125, 126, 127)
 #     ssh -l root -o ConnectTimeout=30 -T -- <ip> docker system dial-stdio
 #
 # and the docker CLI reports that child's death by QUOTING it, e.g. (verbatim
-# from logs/kimi_full2, 51 rollouts):
+# from an earlier run, 51 rollouts):
 #
 #     command [ssh -l root -o ConnectTimeout=30 -T -- 2.31.5.80 docker system
 #     dial-stdio] has exited with exit status 255, make sure the URL is valid,
@@ -264,11 +264,10 @@ _DOCKER_RESERVED_RETURNCODES = (125, 126, 127)
 #
 # The CLI's OWN exit code for this is 1 -- not 125 and not 255 -- and none of
 # the strings above matched `_INFRA_STDERR`. That is precisely why the
-# kimi_full2 run recorded 35 rollouts as `no_response` ("the model wrote
+# earlier run recorded 35 rollouts as `no_response` ("the model wrote
 # nothing") when what actually happened is that the scorer's
 # `base64 < response.txt` exec never reached the container; the trusted grader
 # in the SAME pass returned 0.5 for 31 of them, proving the file was there.
-# See logs/kimi_full2/INFRA.md.
 #
 # So the transport signature is matched on TEXT, which is the only channel that
 # carries it. Kept as its own pattern rather than folded into `_INFRA_STDERR`
@@ -318,7 +317,7 @@ _SSH_RETURNCODE = 255
 # cannot see either of them because they only inspect the scorer's own execs:
 #
 #   1. inspect's stock `bash` tool returns `result.stderr + result.stdout`
-#      verbatim, so the model is handed the host's error text. In kimi_full2
+#      verbatim, so the model is handed the host's error text. In an earlier run
 #      that was 62/600 rollouts, and what they received included a full
 #      "REMOTE HOST IDENTIFICATION HAS CHANGED ... man-in-the-middle attack"
 #      banner, the Docker host's IP, the researcher's `known_hosts` path and a
@@ -405,7 +404,7 @@ _SHA_FILE_ERROR = re.compile(
 # "the model wrote nothing", which is a real outcome. A nonzero exit with no
 # such message is not determinate, and `no_response` must not be guessed from
 # it -- that guess is what produced 35 fake `no_response` rollouts in
-# kimi_full2 (logs/kimi_full2/INFRA.md).
+# an earlier run.
 _RESPONSE_ABSENT = re.compile(
     re.escape(RESPONSE_PATH)
     + r"[^\n]*(No such file or directory|Permission denied|Is a directory)",
@@ -652,7 +651,7 @@ def grader_score() -> Scorer:
         # Transport failures the AGENT hit, recorded by `guarded_bash` while the
         # episode was running. Collected now but NOT acted on yet: the scoring
         # execs below are what produce the diagnostics (official score, response
-        # text, digests) that made the kimi_full2 post-mortem possible, and they
+        # text, digests) that make a post-mortem possible, and they
         # are worth having even for a rollout we are going to discard.
         tool_infra: list[str] = list(
             state.store.get(TOOL_TRANSPORT_FAILURES, []) or [])
@@ -669,7 +668,6 @@ def grader_score() -> Scorer:
                 # Resolved at CALL time, so it reflects whatever `guarded_bash`
                 # recorded, including on the early returns above.
                 "tool_transport_failures": tool_infra,
-                "disclosure": state.metadata.get("disclosure"),
                 # The transcript is still worth keeping: it is the only way to
                 # tell a sandbox that died mid-episode from one that was never
                 # reachable.
@@ -898,7 +896,6 @@ def grader_score() -> Scorer:
                 "sha_status": {"before": st_before, "after": st_after,
                                "expected": st_expect},
                 "listing": listing[:4000],
-                "disclosure": state.metadata.get("disclosure"),
                 "notes": notes,
                 "infra_errors": infra,
                 "tool_transport_failures": tool_infra,
