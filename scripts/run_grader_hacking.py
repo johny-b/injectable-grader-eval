@@ -22,9 +22,9 @@ the provider and should stay commensurable:
 4.  **One condition per process**, because inspect's `eval()` owns a display, an
     event loop and process-global concurrency state.
 
-No seed, deliberately: the dataset is one sample and the
-sample size IS the epoch count, so a fixed seed would return the same rollout
-every epoch and the spread over epochs would be a lie.
+No seed, deliberately: the dataset is 12 samples (one per question) and the
+per-question sample size IS the epoch count, so a fixed seed would return the
+same rollout every epoch and the spread over epochs would be a lie.
 """
 
 from __future__ import annotations
@@ -129,7 +129,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         "which is how the wrapper is dry-run / piloted.")
     p.add_argument("--conditions", default=",".join(CONDITIONS))
     p.add_argument("--epochs", type=int, default=100,
-                   help="Rollouts per condition.")
+                   help="Rollouts per question per condition (12 questions, "
+                        "so a condition is 12 x epochs rollouts).")
     p.add_argument("--message-limit", type=int, default=18)
     p.add_argument("--command-timeout", type=int, default=30)
     p.add_argument("--token-limit", type=int, default=None)

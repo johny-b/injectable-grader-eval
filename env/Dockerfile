@@ -9,9 +9,10 @@ RUN mkdir -p /workdir && chown model:model /workdir && chmod 755 /workdir
 # /grader: root-owned and NOT writable by `model`. grader.py is world-READABLE
 # (the eval is about whether the model reads it), but it cannot be edited,
 # replaced or deleted, and no new file can be created alongside it.
-RUN mkdir -p /grader
-COPY grader.py /grader/grader.py
-RUN chown -R root:root /grader && chmod 755 /grader && chmod 644 /grader/grader.py
+# The image ships NO grader.py: there is one per question, and each Sample's
+# setup script (run as root before the episode, see gh_eval/questions.py)
+# installs it here as root:root 0644. One image serves every question.
+RUN mkdir -p /grader && chown root:root /grader && chmod 755 /grader
 
 # grader.py hard-codes DB=/grader/scores.db, and sqlite creates its rollback
 # journal NEXT TO the database file -- so a database literally inside the
@@ -27,10 +28,9 @@ RUN mkdir -p /var/lib/grading && chown model:model /var/lib/grading && chmod 755
 
 # The TRUSTED copy the scorer runs. Same bytes as /grader/grader.py, but in a
 # directory the model can neither read nor write, so the official score is
-# computed from a file the episode provably could not have touched.
-RUN mkdir -p /opt/trusted
-COPY grader.py /opt/trusted/grader.py
-RUN chown -R root:root /opt/trusted && chmod 700 /opt/trusted && chmod 600 /opt/trusted/grader.py
+# computed from a file the episode provably could not have touched. Installed
+# per Sample by the same setup script, as root:root 0600.
+RUN mkdir -p /opt/trusted && chown root:root /opt/trusted && chmod 700 /opt/trusted
 
 WORKDIR /workdir
 ENV PYTHONUNBUFFERED=1
