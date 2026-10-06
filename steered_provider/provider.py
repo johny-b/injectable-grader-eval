@@ -175,6 +175,9 @@ class SteeredAPI(OpenAICompatibleAPI):
         steer_strength: float | str | None = None,
         enable_thinking: bool | str | None = None,
         kimi_tool_calls: bool | str = False,
+        context_window: int | str | None = None,
+        context_margin: int | str = 32,
+        cap_log: str | None = None,
         **model_args: Any,
     ) -> None:
         # All three are consumed here rather than forwarded: whatever remains in
@@ -215,6 +218,13 @@ class SteeredAPI(OpenAICompatibleAPI):
         # Client-side parsing of the model's native tool-call markup, for a
         # server with no --tool-call-parser. See parse_kimi_tool_calls().
         self.kimi_tool_calls = _as_bool(kimi_tool_calls)
+
+        # Dynamic max_tokens cap (see _generate_completion). None = off.
+        self.context_window = int(context_window) if context_window else None
+        self.context_margin = int(context_margin)
+        self.cap_log = cap_log or os.environ.get("STEERED_CAP_LOG") or None
+        self.cap_stats = {"requests": 0, "capped": 0, "tokenize_failed": 0,
+                          "retried_after_400": 0, "max_prompt_tokens": 0}
 
         super().__init__(
             model_name=model_name,
@@ -348,6 +358,112 @@ class SteeredAPI(OpenAICompatibleAPI):
                 # Without this, inspect reads the choice as a normal stop and
                 # the react loop treats a tool call as the final answer.
                 choice.stop_reason = "tool_calls"
+
+    # ------------------------------------------------- context-length cap
+    #
+    # vLLM 0.29.0 REJECTS (HTTP 400) a chat request whose prompt + max_tokens
+    # exceeds --max-model-len, rather than shortening the generation. With
+    # max_tokens=32768 on a 65536 server, any agent turn whose accumulated
+    # transcript exceeds ~32.7k tokens would become a failed sample, and more
+    # often in whichever condition writes longer transcripts. So, when
+    # `context_window` is set, every request is first measured EXACTLY with the
+    # server's own /tokenize (same messages, tools and chat_template_kwargs as
+    # the request, add_generation_prompt=True -- the same template render the
+    # engine does) and max_tokens is lowered to
+    #     min(max_tokens, context_window - prompt_tokens - context_margin)
+    # A turn capped this way that runs out of room ends with finish_reason
+    # "length", exactly like any other truncated generation. If /tokenize
+    # fails, the request goes out uncapped and a 400 "maximum context length"
+    # is retried ONCE with max_tokens derived from the prompt size in the
+    # error message. Every cap is appended to `cap_log` (JSONL) if set.
+    def _tokenize_url(self) -> str:
+        base = str(self.base_url or DEFAULT_BASE_URL).rstrip("/")
+        return (base[: -len("/v1")] if base.endswith("/v1") else base) + "/tokenize"
+
+    async def _count_prompt_tokens(self, request: dict[str, Any]) -> int | None:
+        import httpx
+        from openai import NOT_GIVEN
+
+        extra = request.get("extra_body") or {}
+        body: dict[str, Any] = {
+            "model": request.get("model"),
+            "messages": request["messages"],
+            "add_generation_prompt": True,
+        }
+        tools = request.get("tools")
+        if tools is not None and tools is not NOT_GIVEN:
+            body["tools"] = tools
+        if extra.get(TEMPLATE_KWARGS_FIELD):
+            body["chat_template_kwargs"] = extra[TEMPLATE_KWARGS_FIELD]
+        try:
+            payload = json.loads(json.dumps(body, default=lambda o: getattr(o, "model_dump", lambda: str(o))()))
+            hdr = {"Authorization": f"Bearer {self.api_key}"}
+            async with httpx.AsyncClient(timeout=120.0) as c:
+                r = await c.post(self._tokenize_url(), json=payload, headers=hdr)
+                if r.status_code != 200 and payload.get("model"):
+                    # e.g. a LoRA name the tokenize route does not resolve: the
+                    # adapter does not change the tokenizer or the chat
+                    # template, so the base model's count is the same count.
+                    payload.pop("model")
+                    r = await c.post(self._tokenize_url(), json=payload, headers=hdr)
+            if r.status_code != 200:
+                raise RuntimeError(f"/tokenize {r.status_code}: {r.text[:200]}")
+            return int(r.json()["count"])
+        except Exception as ex:  # noqa: BLE001
+            self.cap_stats["tokenize_failed"] += 1
+            self._log_cap({"event": "tokenize_failed", "error": f"{type(ex).__name__}: {ex}"[:300]})
+            return None
+
+    def _log_cap(self, rec: dict[str, Any]) -> None:
+        if not self.cap_log:
+            return
+        import time as _t
+        try:
+            with open(self.cap_log, "a") as fh:
+                fh.write(json.dumps({"t": _t.strftime("%Y-%m-%dT%H:%M:%SZ", _t.gmtime()),
+                                     "model": self.model_name,
+                                     "steer": [self.steer_vector, self.steer_strength],
+                                     **rec}) + "\n")
+        except OSError:
+            pass
+
+    @override
+    async def _generate_completion(self, request: dict[str, Any], config: GenerateConfig) -> Any:
+        if not self.context_window:
+            return await super()._generate_completion(request, config)
+        import openai
+
+        self.cap_stats["requests"] += 1
+        want = request.get("max_tokens") or request.get("max_completion_tokens")
+        n = await self._count_prompt_tokens(request)
+        if n is not None:
+            self.cap_stats["max_prompt_tokens"] = max(self.cap_stats["max_prompt_tokens"], n)
+            room = self.context_window - n - self.context_margin
+            if want is None or room < want:
+                new = max(1, room)
+                request["max_tokens"] = new
+                request.pop("max_completion_tokens", None)
+                self.cap_stats["capped"] += 1
+                self._log_cap({"event": "capped", "prompt_tokens": n,
+                               "requested": want, "max_tokens": new})
+        try:
+            return await super()._generate_completion(request, config)
+        except openai.BadRequestError as ex:
+            msg = str(ex)
+            m = re.search(r"prompt contains at least (\d+) input tokens", msg) or \
+                re.search(r"your prompt contains (\d+) input tokens", msg)
+            if "maximum context length" not in msg or not m:
+                raise
+            n2 = int(m.group(1))
+            new = self.context_window - n2 - self.context_margin
+            if new < 1:
+                raise
+            request["max_tokens"] = new
+            request.pop("max_completion_tokens", None)
+            self.cap_stats["retried_after_400"] += 1
+            self._log_cap({"event": "retry_after_400", "prompt_tokens_at_least": n2,
+                           "requested": want, "max_tokens": new})
+            return await super()._generate_completion(request, config)
 
     @override
     def connection_key(self) -> str:

@@ -124,7 +124,10 @@ def collect(files: list[str], do_recheck: bool = False) -> list[dict]:
         log = read_eval_log(f)
         emd = log.eval.metadata or {}
         cond = emd.get("condition", "-")
-        model = log.eval.model
+        # A run may label its arm explicitly (run_kimi.py: kimi/base,
+        # kimi/hacker-lora, kimi/steer-0003-0.5 -- two of which share the
+        # inspect model steered/kimi); otherwise the inspect model name.
+        model = emd.get("model_label") or log.eval.model
         for i, s in enumerate(log.samples or []):
             sc = list(s.scores.values())[0] if s.scores else None
             md = (sc.metadata or {}) if sc else {}
@@ -143,7 +146,11 @@ def collect(files: list[str], do_recheck: bool = False) -> list[dict]:
             refusals = _api_refusals(s)
             rows.append({
                 "file": f, "idx": len(rows), "sample_id": s.id, "epoch": s.epoch,
-                "condition": cond, "model": model,
+                "condition": cond, "model": model, "served_model": log.eval.model,
+                "steer_vector": emd.get("steer_vector"),
+                "steer_strength": emd.get("steer_strength"),
+                "temperature": (emd.get("generate_config") or {}).get("temperature"),
+                "top_p": (emd.get("generate_config") or {}).get("top_p"),
                 "effort": emd.get("effort"), "max_tokens": emd.get("max_tokens"),
                 "outcome": md.get("outcome", "error"),
                 "score": val.get("score", 0.0) if isinstance(val, dict) else 0.0,

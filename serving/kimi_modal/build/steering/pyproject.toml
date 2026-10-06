@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+# Minimal root distribution: ONLY `steering_vectors` (the vector-directory
+# format, Kimi-K2.5 profile -- copied from /work/workspace/ige/steering_vectors,
+# which is the public repo's package with PROFILE = KIMI_K25). Installed
+# --no-deps on the GPU host, exactly as the original env.sh did.
+[project]
+name = "steering-vectors-local"
+version = "0.0.0"
+requires-python = ">=3.12"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["steering_vectors*"]
+exclude = ["pod*", "vectors*"]

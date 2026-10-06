@@ -1,0 +1,52 @@
+{
+  "finished_at": "2026-10-02T09:36:02Z",
+  "elapsed_seconds": 2047,
+  "base_repo": "moonshotai/Kimi-K2.5",
+  "lora_repo": "uwuwuwuwuwuwu/kimi-k2.5-reward-hacking-step-648",
+  "dirs": {
+    "/vol/models/Kimi-K2.5": {
+      "bytes": 595205041639,
+      "gib": 554.33,
+      "files": 264
+    },
+    "/vol/models/lora-step-648": {
+      "bytes": 18777120022,
+      "gib": 17.49,
+      "files": 15
+    },
+    "/vol/models/lora_vllm": {
+      "bytes": 9377710814,
+      "gib": 8.73,
+      "files": 3
+    }
+  },
+  "raw_adapter_bytes": 18777115704,
+  "converted_adapter_bytes": 9377708960,
+  "config_sha256": {
+    "/vol/models/Kimi-K2.5/config.json": {
+      "bytes": 5416,
+      "sha256": "acd5bb01a16f64b309599cd6ed196be056f613c99d6bc9300692b82cd10882f6"
+    },
+    "/vol/models/Kimi-K2.5/generation_config.json": {
+      "bytes": 52,
+      "sha256": "5431db52f431099f309ece737670e977de148f8cfd5340e920ff1f44d7cff596"
+    },
+    "/vol/models/Kimi-K2.5/chat_template.jinja": {
+      "bytes": 3759,
+      "sha256": "7c91e4b3578b518bfb388d2e3dc645daf0fbf843656e887db75d12891e0030ff"
+    },
+    "/vol/models/Kimi-K2.5/tokenizer_config.json": {
+      "bytes": 4862,
+      "sha256": "12fcab43d2b6068f46769f5ff373960bf7c17a94d7abbc50e2491306b2f6cf58"
+    },
+    "/vol/models/lora-step-648/adapter_config.json": {
+      "bytes": 755,
+      "sha256": "b4648189b4833debb3cab41b22a1a1860cfe61823eade30245886e8b4eab27bc"
+    },
+    "/vol/models/lora_vllm/adapter_config.json": {
+      "bytes": 1085,
+      "sha256": "c5a5f3c572782a36792f94c9cd76de119daba90eb9ab9458a70baf6d4c7dfc29"
+    }
+  },
+  "chat_template_matches_local_copy": true
+}

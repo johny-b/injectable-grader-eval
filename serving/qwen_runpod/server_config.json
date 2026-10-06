@@ -1,0 +1,18 @@
+{
+  "host": "RunPod 1x H100 80GB HBM3, driver 580.126.09 (CUDA 13.0), ssh root@87.120.211.208:15825; server bound to pod 127.0.0.1:8000, reached via ssh tunnel local 127.0.0.1:18001 (qwen_serve/tunnel.sh)",
+  "image": "bare Ubuntu 22.04 (NOT ghcr.io/johny-b/steering-vectors-pod); python 3.12.15 venv at /workspace/venv via uv",
+  "vllm": "0.27.1", "torch": "2.13.0+cu130", "flashinfer": "0.6.16.post3 (sampling kernel JIT-compiled with pip nvidia-cuda-nvcc 13.0.88; CUDA_HOME=<venv>/nvidia/cu13)",
+  "steering_code": "johny-b/public-steering-vectors local copy (ref/public-steering-vectors), pod + steering_vectors installed --no-deps -e; pod/scripts/serve.sh",
+  "model": "Qwen/Qwen3.6-27B (HF snapshot 6a9e13bd6fc8f0983b9b99948120bc37f49c13e9), bf16",
+  "serve_cmd": "MODEL=Qwen/Qwen3.6-27B SERVED_MODEL_NAME=Qwen/Qwen3.6-27B STEER_VECTOR_DIR=/workspace/steering-vectors/vectors MAX_MODEL_LEN=65536 MAX_NUM_SEQS=48 GPU_MEMORY_UTILIZATION=0.92 pod/scripts/serve.sh --reasoning-parser qwen3 --enable-auto-tool-choice --tool-call-parser qwen3_coder --language-model-only",
+  "max_model_len": 65536, "max_num_seqs": 48, "gpu_memory_utilization": 0.92,
+  "kv_cache_tokens": 318640, "max_num_batched_tokens": 8192, "chunked_prefill": true,
+  "enable_prefix_caching": false,
+  "prefix_caching_note": "vLLM 0.27.1 default for this hybrid (Gated DeltaNet + attention) model: prefix caching OFF, so no cross-condition KV reuse is possible; cache_salt is sent anyway",
+  "cuda_graphs": "on (serve.sh default), VLLM_DISABLE_COMPILE_CACHE=1",
+  "speculative_decoding": "none (MTP head not used)",
+  "reasoning_parser": "qwen3", "tool_call_parser": "qwen3_coder", "enable_auto_tool_choice": true,
+  "generation_config": "vLLM default 'auto' (model generation_config.json: temperature 1.0, top_p 0.95, top_k 20) -- client sends all sampling params explicitly anyway",
+  "steering": {"vector": "0007", "name": "verifier-vs-human-grading", "layer": 36, "block": 35, "scale": 7.320113853761506, "vector_norm": 11.25151161959549, "vector_sha256": "504207f7b917c376cc3a313440f9af83fd179cf4e85a2496ae57c93db8755566", "manifest_digest": "7084f59297fd5db4b7243743f07da393978eecf6d371b8f30eabcc5b25f58c3a", "applied": "h += strength * scale * v at output of block 35, every token position (prompt and generated)"},
+  "started_at": "2026-10-06T00:02:52Z"
+}
